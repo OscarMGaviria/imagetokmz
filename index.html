@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Generar KMZ con Múltiples Marcadores e Imágenes</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        @import url(https://fonts.googleapis.com/css?family=Fira+Sans:400,300,700,500,400italic,500italic,700italic,300italic);
+
+        body {
+            background: #2C3940;
+            overflow: hidden;
+            font-family: 'Fira Sans', sans-serif;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            position: relative;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        button {
+            position: relative;
+            margin: 10px 0;
+            padding: 10px 20px;
+            font-size: 16px;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s, box-shadow 0.3s;
+            box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.3);
+        }
+
+        button:hover {
+            background: #00A0D4;
+            box-shadow: 0px 5px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .file-select-button {
+            background: #00C4FF;
+            color: white;
+        }
+
+        .generate-kmz-button {
+            background: #FF5733;
+            color: white;
+        }
+
+        .generate-kmz-button:hover {
+            background: #C70039;
+        }
+
+        #status {
+            font-size: 14px;
+            margin: 10px 0;
+            color: white; /* Texto en blanco */
+        }
+
+        /* Estilo para el loading */
+        .loading-popup {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 18px;
+            display: none;
+            z-index: 1000; /* Asegura que el loading esté sobre todos los elementos */
+        }
+
+        .loading-popup .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-left: 4px solid #00C4FF;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Estilo para desactivar elementos */
+        .disabled {
+            pointer-events: none;
+            opacity: 0.5;
+        }
+
+        /* Estilo para el título pequeño en la esquina inferior izquierda */
+        .footer-text {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            font-size: 12px;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-popup" id="loadingPopup">
+        <div class="spinner"></div> Cargando...
+    </div>
+
+    <input type="file" id="fileInput" accept="image/*" multiple />
+    <button class="file-select-button" onclick="document.getElementById('fileInput').click()">Seleccionar Imágenes</button>
+    <p id="status"></p>
+    <button id="generateKMZ" class="generate-kmz-button" style="display: none;" disabled>Download KMZ</button>
+
+    <div class="footer-text">Desarrollado por Oscar Marquez</div>
+
+    <script>
+        function resizeImage(imageFile, width, height, callback) {
+            const img = new Image();
+            img.onload = function() {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = width;
+                canvas.height = height;
+                ctx.drawImage(img, 0, 0, width, height);
+                canvas.toBlob(callback, imageFile.type);
+            };
+            img.src = URL.createObjectURL(imageFile);
+        }
+
+        function rotateImage(imageFile, callback) {
+            const img = new Image();
+            img.onload = function() {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                // Draw image on canvas with no rotation (0 degrees)
+                ctx.drawImage(img, 0, 0);
+                canvas.toBlob(callback, imageFile.type);
+            };
+            img.src = URL.createObjectURL(imageFile);
+        }
+
+        function generateKML(markers) {
+            let placemarks = markers.map((marker, index) => `
+                <Placemark>
+                    <name>${index + 1}</name>
+                    <styleUrl>#markerStyle</styleUrl>
+                    <Point>
+                        <coordinates>${marker.lon},${marker.lat},0</coordinates>
+                    </Point>
+                    <description><![CDATA[
+                        <img src="${marker.imageFileNameLarge}" style="width:300; height:auto;" />
+                    ]]></description>
+                </Placemark>
+            `).join('');
+
+            return `<?xml version="1.0" encoding="UTF-8"?>
+            <kml xmlns="http://www.opengis.net/kml/2.2">
+                <Document>
+                    <Style id="markerStyle">
+                        <IconStyle>
+                            <Icon>
+                                <href>${markers[0].imageFileNameSmall}</href>
+                            </Icon>
+                        </IconStyle>
+                    </Style>
+                    ${placemarks}
+                </Document>
+            </kml>`;
+        }
+
+        function generateKMZ(markers) {
+            const kmlContent = generateKML(markers);
+            const zip = new JSZip();
+
+            // Agregar el archivo KML
+            zip.file("doc.kml", kmlContent);
+
+            // Agregar todas las imágenes como recursos
+            markers.forEach(marker => {
+                zip.file(marker.imageFileNameSmall, marker.imageFileSmall);
+                zip.file(marker.imageFileNameLarge, marker.imageFileLarge);
+            });
+
+            zip.generateAsync({ type: "blob" })
+                .then(function(content) {
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(content);
+                    link.download = 'markers.kmz';
+                    link.click();
+                });
+        }
+
+        document.getElementById('fileInput').addEventListener('change', function(event) {
+            const files = event.target.files;
+            if (files.length > 0) {
+                const markers = [];
+                let processed = 0;
+
+                // Mostrar el mensaje de estado y ocultar el botón de KMZ
+                document.getElementById('status').textContent = `Imágenes seleccionadas: ${files.length}`;
+                document.getElementById('generateKMZ').style.display = 'none';
+
+                // Mostrar el popup de carga
+                const loadingPopup = document.getElementById('loadingPopup');
+                loadingPopup.style.display = 'flex';
+
+                // Desactivar los elementos de la página
+                document.body.classList.add('disabled');
+
+                // Asegurar que el popup de carga se muestre por al menos 3 segundos
+                const minLoadingTime = 3000;
+                const startTime = Date.now();
+
+                Array.from(files).forEach(file => {
+                    resizeImage(file, 36, 48, function(resizedBlob) {
+                        rotateImage(file, function(rotatedBlob) {
+                            const reader = new FileReader();
+                            reader.onload = function(e) {
+                                const image = new Image();
+                                image.onload = function() {
+                                    EXIF.getData(image, function() {
+                                        const lat = EXIF.getTag(this, "GPSLatitude");
+                                        const lon = EXIF.getTag(this, "GPSLongitude");
+                                        const latRef = EXIF.getTag(this, "GPSLatitudeRef");
+                                        const lonRef = EXIF.getTag(this, "GPSLongitudeRef");
+
+                                        if (lat && lon && latRef && lonRef) {
+                                            const latitude = (latRef === "S" ? -1 : 1) * (lat[0] + lat[1] / 60 + lat[2] / 3600);
+                                            const longitude = (lonRef === "W" ? -1 : 1) * (lon[0] + lon[1] / 60 + lon[2] / 3600);
+
+                                            markers.push({
+                                                lat: latitude,
+                                                lon: longitude,
+                                                imageFileNameSmall: file.name.replace(/\.[^/.]+$/, "") + "_small.png",
+                                                imageFileSmall: resizedBlob,
+                                                imageFileNameLarge: file.name,
+                                                imageFileLarge: rotatedBlob
+                                            });
+
+                                            processed++;
+                                            if (processed === files.length) {
+                                                // Verificar el tiempo transcurrido
+                                                const elapsedTime = Date.now() - startTime;
+                                                const timeToWait = Math.max(minLoadingTime - elapsedTime, 0);
+
+                                                // Ocultar el popup de carga después del tiempo de espera
+                                                setTimeout(() => {
+                                                    loadingPopup.style.display = 'none';
+                                                    document.body.classList.remove('disabled');
+                                                    
+                                                    // Mostrar el botón KMZ y habilitarlo
+                                                    const generateButton = document.getElementById('generateKMZ');
+                                                    generateButton.style.display = 'block';
+                                                    generateButton.disabled = false;
+                                                    generateButton.onclick = function() {
+                                                        generateKMZ(markers);
+                                                    };
+                                                }, timeToWait);
+                                            }
+                                        } else {
+                                            document.getElementById('status').textContent = 'No GPS data found in one or more files.';
+                                        }
+                                    });
+                                };
+                                image.src = e.target.result;
+                            };
+                            reader.readAsDataURL(file);
+                        });
+                    });
+                });
+            }
+        });
+    </script>
+</body>
+</html>
